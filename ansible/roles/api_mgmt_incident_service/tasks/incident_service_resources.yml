@@ -4,8 +4,8 @@
     tenant_admin_url: "user{{ item }}-{{ API_MANAGER_NS }}-admin.apps.{{ api_mgmt_subdomain_base }}"
     response_dir: "{{ work_dir }}/{{ api_service_name }}"
     private_base_url: "http://user{{ item }}-{{ api_service_name }}.user{{ item }}-er-demo:8080"
-    public_stage_url: "https://user{{ item }}-{{ API_MANAGER_NS }}-mt-stage-generic.apps.{{ api_mgmt_subdomain_base }}:443"
-    public_prod_url: "https://user{{ item }}-{{ API_MANAGER_NS }}-mt-prod-generic.apps.{{ api_mgmt_subdomain_base }}:443"
+    public_stage_url: "https://user{{ item }}-{{ API_MANAGER_NS }}-stage-generic.apps.{{ api_mgmt_subdomain_base }}:443"
+    public_prod_url: "https://user{{ item }}-{{ API_MANAGER_NS }}-prod-generic.apps.{{ api_mgmt_subdomain_base }}:443"
 
 - name: "{{ item }} create {{ response_dir }}"
   file:
@@ -13,9 +13,9 @@
     state: directory
 
 - shell:
-    oc get secret apicast-configuration-url-secret -n user{{ item }}-gw -o template --template={{ json_template }} | base64 -d | cut -d'@' -f1 | cut -d'/' -f3
+    oc get secret apicast-configuration-url-secret-stage -n user{{ item }}-3scale-gw -o template --template={{ json_template }} | base64 -d | cut -d'@' -f1 | cut -d'/' -f3
   vars:
-    json_template: '\{\{.data.password\}\}'
+    json_template: '\{\{.data.AdminPortalURL\}\}'
   register: tenant_access_token
 
 - debug:
@@ -27,12 +27,14 @@
 - name: "{{ item }} 1)  list api resources;  https://{{ tenant_admin_url }}?access_token={{ tenant_access_token.stdout }}"
   uri: 
     url: "https://{{ tenant_admin_url }}/admin/api/services.xml"
-    body: "access_token={{ tenant_access_token.stdout }}"
     method: GET
     timeout: 5
     status_code: 200
     return_content: yes
     validate_certs: no
+    force_basic_auth: yes
+    user: "{{ tenant_access_token.stdout }}"
+    password: ""
   register: list_services
 
 - name: "{{ item }}  2) copy response to {{ response_dir }}/{{ output_file }}"
@@ -55,11 +57,14 @@
 - name: "{{ item }} 4) create {{ api_service_name }} API in 3scale"
   uri: 
     url: "https://{{ tenant_admin_url }}/admin/api/services.xml"
-    body: "access_token={{ tenant_access_token.stdout }}&name={{ api_service_name }}"
+    body: "name={{ api_service_name }}"
     method: POST
     timeout: 5
     return_content: yes
     validate_certs: no
+    force_basic_auth: yes
+    user: "{{ tenant_access_token.stdout }}"
+    password: ""
 
     # status_code:  HTTP Error 422: Unprocessable Entity :  System name has already been taken
     status_code: 201, 422
@@ -82,11 +87,14 @@
 - name: "{{ item }} 7) create {{ api_service_name }}_app_plan for serviceId = {{ serviceId.matches[0].id }}"
   uri: 
     url: "https://{{ tenant_admin_url }}/admin/api/services/{{ serviceId.matches[0].id }}/application_plans.xml"
-    body: "access_token={{ tenant_access_token.stdout }}&name={{ api_service_name }}_app_plan&state_event=publish"
+    body: "name={{ api_service_name }}_app_plan&state_event=publish"
     method: POST
     timeout: 5
     return_content: yes
     validate_certs: no
+    force_basic_auth: yes
+    user: "{{ tenant_access_token.stdout }}"
+    password: ""
 
     # status_code:  HTTP Error 422: Unprocessable Entity :  System name has already been taken
     status_code: 201, 422
@@ -112,11 +120,14 @@
 - name: "{{ item }} 10) update service_proxy for serviceId = {{ serviceId.matches[0].id }}"
   uri: 
     url: "https://{{ tenant_admin_url }}/admin/api/services/{{ serviceId.matches[0].id }}/proxy.xml"
-    body: "access_token={{ tenant_access_token.stdout }}&api_backend={{ private_base_url }}&endpoint={{ public_prod_url }}&sandbox_endpoint={{ public_stage_url }}"
+    body: "api_backend={{ private_base_url }}&endpoint={{ public_prod_url }}&sandbox_endpoint={{ public_stage_url }}"
     method: PATCH
     timeout: 5
     return_content: yes
     validate_certs: no
+    force_basic_auth: yes
+    user: "{{ tenant_access_token.stdout }}"
+    password: ""
     status_code: 200
   register: update_proxy
 
@@ -126,12 +137,14 @@
 - name: "{{ item }} 11) Determine the ID of the sandbox environment proxy_config"
   uri:
     url: "https://{{ tenant_admin_url }}/admin/api/services/{{ serviceId.matches[0].id }}/proxy/configs/sandbox.json"
-    body: "access_token={{ tenant_access_token.stdout }}"
     method: GET
     timeout: 5
     return_content: yes
     validate_certs: no
     status_code: 200
+    force_basic_auth: yes
+    user: "{{ tenant_access_token.stdout }}"
+    password: ""    
   register: proxy_config
 
 - name: "{{ item }}  12) copy response to {{ response_dir }}/{{ output_file }}"
@@ -147,11 +160,14 @@
 - name: "{{ item }} 14) Promote the sandbox environment to a production environment; {{ proxy_config_version }}"
   uri:
     url: "https://{{ tenant_admin_url }}/admin/api/services/{{ serviceId.matches[0].id }}/proxy/configs/sandbox/{{ proxy_config_version }}/promote.json"
-    body: "access_token={{ tenant_access_token.stdout }}&to=production"
+    body: "to=production"
     method: POST
     timeout: 5
     return_content: yes
     validate_certs: no
+    force_basic_auth: yes
+    user: "{{ tenant_access_token.stdout }}"
+    password: ""
 
     # 422: version has already been taken
     status_code: 201, 422
@@ -163,11 +179,13 @@
   - name: "{{ item }} 5) Delete default service API {{ defaultServiceId }}"
     uri: 
       url: "https://{{ tenant_admin_url }}/admin/api/services/{{ defaultServiceId }}.xml"
-      body: "access_token={{ tenant_access_token.stdout }}"
       method: DELETE
       timeout: 5
       return_content: yes
       validate_certs: no
+      force_basic_auth: yes
+      user: "{{ tenant_access_token.stdout }}"
+      password: ""
       status_code: 200
   when: >
     check_default_api is not failed
